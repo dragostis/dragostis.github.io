@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    
+    
+    
+    <title>
+        Analytic flattening of quadratic Bézier offsets
+    </title>
+    
+
+    
+    
+
+    
+    
+        <link href=https://dragostis.github.io/fonts.css rel="stylesheet" />
+    
+
+    
+    
+
+    
+        <script type="text/javascript" id="MathJax-script" async
+          src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+        </script>
+    
+
+    
+    <link rel="alternate" type="application/atom+xml" title="" href="https://dragostis.github.io/atom.xml">
+
+    
+    
+    
+        <link rel="stylesheet" type="text/css" href="https://dragostis.github.io/theme/light.css"/>
+    
+
+    <link rel="stylesheet" type="text/css" media="screen" href=https://dragostis.github.io/main.css />
+
+
+    
+</head>
+
+
+<body>
+    <div class="content">
+        <header>
+    <div class="main">
+        <a href=https:&#x2F;&#x2F;dragostis.github.io></a>
+
+        <div class="socials">
+            
+            <a rel="me" href="https:&#x2F;&#x2F;github.com&#x2F;dragostis&#x2F;" class="social">
+                <img alt=github src="/social_icons/github.svg">
+            </a>
+            
+        </div>
+    </div>
+
+    <nav>
+        
+            <a href=&#x2F;posts style="margin-left: 0.7em">&#x2F;posts</a>
+        
+            <a href=&#x2F;projects style="margin-left: 0.7em">&#x2F;projects</a>
+        
+            <a href=&#x2F;about style="margin-left: 0.7em">&#x2F;about</a>
+        
+    </nav>
+</header>
+
+
+        
+        
+    
+<main>
+    <article>
+        <div class="title">
+            
+            
+    <div class="page-header">
+        Analytic flattening of quadratic Bézier offsets<span class="primary-color" style="font-size: 1.6em">.</span>
+    </div>
+
+
+                <div class="meta">
+                    
+                        Posted on <time>2022-01-02</time>
+                    
+
+                    
+                </div>
+        </div>
+
+        
+
+        
+        
+
+        <section class="body">
+            <p>Many modern 2D renderers convert Bézier curves into polylines in order to
+render them. This results in a simpler painting algorithm since it only has to
+know how to render one single type of primitive: a line.</p>
+<p>Given some initial tolerance, the question of how to split a Bézier into lines
+is fairly involved. I'd argue that there are two traditional answers:</p>
+<ol>
+<li>Recursively subdividing the curve until each section is flat enough that it
+can be replaced with a line, according to the tolerance.</li>
+<li>Finding, in parametrized space (e.g. curve's <em>t</em>), the largest section that
+falls within the tolerance, then dividing the parametrized space equally
+such that all sections are smaller or equal to that section.</li>
+</ol>
+<p>The first approach cannot be parallelized, but results in a number of lines
+decently close to the ideal. The second can be parallelized, but it generates
+too many lines in places where the curve is rather flat.</p>
+<p>In a modern renderer, both of these properties are desirable. The low number of
+lines enables the curves to be cached in a compact, memory-efficient form that
+can still be manipulated as long as it is not scaled up. The second property,
+parallelization, is hopefully self-evident.</p>
+<p>An elegant way to eliminate this trade-off is by using Raph Levien's analytic
+<a href="https://raphlinus.github.io/graphics/curves/2019/12/23/flatten-quadbez.html">quadratic Bézier flattener</a> which is also fully parallelizable. Since <a href="https://github.com/google/forma">forma</a>
+needs a good solution for stroked paths, I decided to extend his method to
+quadratic curve offsets. Because forma lowers cubic Béziers to quadratics in
+the first place, this method would be sufficient for all stroking needs.</p>
+<p>The <a href="https://blend2d.com/research/simplify_and_offset_bezier_curves.pdf">closest approach</a> to this is described by Fabian Yzerman where all curves
+are approximated by quadratics which is then followed by a curvature-aware,
+iterative approach. This provides something closer to a fully analytical
+method, but is limited by the data-dependency that keeps it from having
+parallelization potential.</p>
+<p>In the end, I started from Raph's formula (which applies to the \(x ^ 2\)
+parabola), where \(l\) is the arc length and \(\kappa\) is the curvature:</p>
+<p>$$
+segments = \frac{q}{2 \sqrt{2}} \int_{x_0}^{x_1} l(x)\sqrt{\kappa(x)} dx,
+$$</p>
+<p>$$ \quad q = \sqrt{\frac{scale}{tolerance}} $$</p>
+<p>The interesting part of the formula above is the integral which is virtually
+the point density of the curve from \(x_0\) to \(x_1\):</p>
+<p>$$ \rho(x_0, x_1) = \int_{x_0}^{x_1} l(x)\sqrt{\kappa(x)} dx $$</p>
+<p>This can then be extended to a version that takes the distance \(d\) to the curve:</p>
+<p>$$ \rho(x_0, x_1, d) = \int_{x_0}^{x_1} l(x, d)\sqrt{\kappa(x, d)} dx $$</p>
+<p>Taking advantage of a <a href="https://en.wikipedia.org/wiki/Parallel_curve#Geometric_properties:%5B12%5D">curve offset property</a>, curvature is:</p>
+<p>$$ \kappa(x, d) = \frac{\kappa(x)}{1 + d \kappa(x)} $$</p>
+<p>For the parabola parallel curve arc length and curvature end up:</p>
+<p>$$
+l(x, d) = \sqrt{x ^ 2
+\left(\frac{4 d}{\left(4 x ^ 2 + 1\right) ^ {\frac{3}{2}}} + 2\right) ^ 2 + 1}
+$$</p>
+<p>$$
+\kappa(x, d) = \frac{1}{d + \frac{1}{2} \left(4 x ^ 2 + 1\right) ^ {\frac{3}{2}}}
+$$</p>
+<p>Unsurprisingly, I couldn't find any analytical solution to \(\rho \) and
+especially \(\rho ^ {-1} \). A solution to the integral with an infinite
+sum/fraction may be possible, but finding an inverse would be significantly
+more challenging.</p>
+<p>I saw two possible ways forward to approximate these two functions.</p>
+<h2 id="symbolic-regression">Symbolic regression</h2>
+<p>Symbolic regression is a method of finding pure mathematical approximations to
+a set of points of dimension 2+. A good starting point would be <a href="https://cavalab.org/srbench/">SRBench</a>,
+specifically the black-box section in the results page.</p>
+<p>From that list, I tried <a href="https://github.com/heal-research/operon">Operon</a>, <a href="https://flexgp.github.io/gp-learners/mrgp.html">MRGP</a>, and <a href="https://github.com/brendenpetersen/deep-symbolic-optimization">DSR</a>, with Operon giving the
+best results. The error from the most accurate solution varied from 0.05% all
+the way to a few thousand % for small values of \(x\) and \(d\).</p>
+<p>Weighting the points might have resulted in better overall accuracy, but I
+ended up abandoning this path since no symbolic regressor seemed to have the
+ability to scale: regardless of the amount of time/space used, or how large the
+ensuing output was, it never seemed to come close to the accuracy that was
+needed here.</p>
+<p>Nonetheless, I still think symbolic regression might be something worth
+revisiting when solvers become more robust and manage to scale with time and
+complexity.</p>
+<h2 id="interpolation">Interpolation</h2>
+<p>Suffice to say that interpolation was a significant improvement in terms of
+accuracy. I used SciPy's interpolation library which, in turn, uses <a href="https://netlib.org/dierckx/">DIERCKX</a>.
+This generates a 2D B-spline that's decently cheap to evaluate.</p>
+<p>The key to good accuracy in this case is finding interesting points for the
+grid. I simply picked these points manually in order to minimize the error
+against the goal surface. This worked well in practice and, with an optimized
+implementation in Rust, it seems to have satisfactory performance.</p>
+<p>The following are the density and the inverse approximated by B-splines:</p>
+<p><img src="https://dragostis.github.io/posts/analytic-quad-offset/../density.png" alt="density B-spline" />
+<img src="https://dragostis.github.io/posts/analytic-quad-offset/../inverse.png" alt="inverse B-spline" /></p>
+<h2 id="future-work">Future work</h2>
+<p>Improvement is likely be possible by either finding a pure approximation
+(maybe with symbolic regression) or by finding an alternative interpolation
+that evaluates even faster than the 2D B-spline.</p>
+<h2 id="demo-in-egui">Demo in <a href="https://egui.rs">egui</a></h2>
+<p>The demo below showcases the approach using B-splines to approximate the two
+functions. The code will be made available on <a href="https://github.com/google/forma">GitHub</a> once the implementation
+reaches maturity in terms of stability and efficiency.</p>
+<iframe src="/offset-demo" width="100%" height="700" style="border: 0;"></iframe>
+
+        </section>
+
+        
+
+    </article>
+</main>
+
+
+    </div>
+</body>
+
+</html>
